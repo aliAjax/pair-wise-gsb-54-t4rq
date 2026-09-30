@@ -12,6 +12,8 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+FIELD_SPLICE_RE = re.compile(r"^/api/records/(\d+)/field-splices$")
+SPLICE_ENTRY_RE = re.compile(r"^/api/splice-entries/(\d+)/resolve$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -87,6 +89,16 @@ def make_handler(service: Any, static_dir: Path):
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
+                if parsed.path == "/api/splice-entries":
+                    query = parse_qs(parsed.query)
+                    self._send(200, {"items": service.list_splice_entries(self._actor(), status=query.get("status", [None])[0])})
+                    return
+                if parsed.path == "/api/segments/archive":
+                    query = parse_qs(parsed.query)
+                    cable = query.get("cable", [""])[0]
+                    segment = query.get("segment", [""])[0]
+                    self._send(200, service.get_archive(self._actor(), cable, segment))
+                    return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
                 self._handle_error(exc)
@@ -106,6 +118,16 @@ def make_handler(service: Any, static_dir: Path):
                         raise ValidationError("expected_version必须是整数")
                     record = service.act(self._actor(), int(match.group(1)), version, match.group(2), body.get("data", {}))
                     self._send(200, record)
+                    return
+                match = FIELD_SPLICE_RE.match(parsed.path)
+                if match:
+                    outcome = service.submit_field_splice(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(201, outcome)
+                    return
+                match = SPLICE_ENTRY_RE.match(parsed.path)
+                if match:
+                    outcome = service.resolve_field_entry(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(200, outcome)
                     return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
